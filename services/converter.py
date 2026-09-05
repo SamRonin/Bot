@@ -86,18 +86,23 @@ async def _probe_with_ffmpeg(path: str) -> dict:
         size = os.path.getsize(path)
     except OSError:
         size = 0
-    return {"duration": duration, "size": size}
+    width = height = 0
+    m = re.search(r"Video:.*?[,\s](\d{2,5})x(\d{2,5})", text)
+    if m:
+        width, height = int(m.group(1)), int(m.group(2))
+    return {"duration": duration, "size": size, "width": width, "height": height}
 
 
 async def probe(path: str) -> dict:
-    """Return {'duration': float_seconds, 'size': int_bytes} for a media file."""
+    """Return {'duration', 'size', 'width', 'height'} for a media file."""
     if not ffprobe_available():
         if ffmpeg_available():
             return await _probe_with_ffmpeg(path)
         raise ConvertError("❌ موتور تبدیل ویدیو روی سرور نصب نیست. (ffmpeg)")
     cmd = [
         "ffprobe", "-v", "error",
-        "-show_entries", "format=duration,size",
+        "-show_entries", "format=duration,size:stream=width,height",
+        "-select_streams", "v:0",
         "-of", "json", path,
     ]
     proc = await asyncio.create_subprocess_exec(
@@ -116,9 +121,13 @@ async def probe(path: str) -> dict:
     try:
         data = json.loads((stdout or b"{}").decode("utf-8", "ignore"))
         fmt = data.get("format", {})
+        streams = data.get("streams") or [{}]
+        stream = streams[0] if streams else {}
         return {
             "duration": float(fmt.get("duration") or 0),
             "size": int(float(fmt.get("size") or 0)),
+            "width": int(stream.get("width") or 0),
+            "height": int(stream.get("height") or 0),
         }
     except (ValueError, TypeError, AttributeError):
         raise ConvertError("❌ فایل ویدیویی معتبر نیست.")
@@ -149,6 +158,42 @@ async def to_video_note(src: str, dst: str) -> dict:
     return await probe(dst)
 
 
+def _delogo_filter(info: dict) -> str:
+    """Build an ffmpeg delogo filter from settings.note_delogo (percent based).
+
+    NOTE_DELOGO is "x,y,w,h" in percents of the frame (0-100).
+    Empty/invalid value disables watermark removal.
+    """
+    raw = (settings.note_delogo or "").strip()
+    if not raw:
+        return ""
+    try:
+        px, py, pw, ph = [float(part) for part in raw.split(",")]
+    except (ValueError, TypeError):
+        return ""
+    width = int(info.get("width") or 0)
+    height = int(info.get("height") or 0)
+    if width <= 0 or height <= 0:
+        return ""
+    x = max(1, min(width - 3, int(width * px / 100)))
+    y = max(1, min(height - 3, int(height * py / 100)))
+    w = max(2, min(width - x - 1, int(width * pw / 100)))
+    h = max(2, min(height - y - 1, int(height * ph / 100)))
+    if w < 2 or h < 2:
+        return ""
+    return f"delogo=x={x}:y={y}:w={w}:h={h}"
+
+
+def _normal_video_filters(info: dict) -> str:
+    filters = []
+    delogo = _delogo_filter(info)
+    if delogo:
+        filters.append(delogo)
+    filters.append("scale=trunc(iw/2)*2:trunc(ih/2)*2")
+    filters.append("format=yuv420p")
+    return ",".join(filters)
+
+
 async def to_normal_video(src: str, dst: str) -> dict:
     """Convert a round video-note to a regular (rectangular-container) video.
 
@@ -159,7 +204,7 @@ async def to_normal_video(src: str, dst: str) -> dict:
         "ffmpeg", "-y",
         "-i", src,
         "-map", "0:v:0", "-map", "0:a?",
-        "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p",
+        "-vf", _normal_video_filters(await probe(src)),
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "128k",

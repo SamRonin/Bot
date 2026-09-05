@@ -155,10 +155,8 @@ async def _convert(
             # 3) convert
             if to_kind == "note":
                 out_info = await to_video_note(src, dst)
-                send = message.answer_video_note
             else:
                 out_info = await to_normal_video(src, dst)
-                send = message.answer_video
 
             caption = f"✅ تمومه! اینم {KIND_LABEL[to_kind]} شما 🎉"
             if trimmed:
@@ -169,7 +167,14 @@ async def _convert(
             remaining = max(0, limit - used - 1)
             caption += f"\n\n🔋 سهمیه امروز: {fa_num(remaining)} تبدیل مونده"
 
-            sent = await send(video=FSInputFile(dst), caption=caption)
+            if to_kind == "note":
+                # answer_video_note takes `video_note=` and supports no caption
+                sent = await message.answer_video_note(video_note=FSInputFile(dst))
+                await message.answer(caption)
+            else:
+                sent = await message.answer_video(
+                    video=FSInputFile(dst), caption=caption
+                )
             new_file_id = (
                 sent.video_note.file_id if to_kind == "note"
                 else sent.video.file_id
@@ -280,7 +285,7 @@ async def dest_pick(callback: CallbackQuery) -> None:
         if pending.kind == "note":
             await callback.bot.send_video_note(
                 chat_id=int(chat_id) if chat_id.lstrip("-").isdigit() else chat_id,
-                video=pending.file_id,
+                video_note=pending.file_id,
             )
         else:
             await callback.bot.send_video(

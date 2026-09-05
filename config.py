@@ -89,7 +89,7 @@ class Settings:
             pro_max_mb=_get_int("PRO_MAX_MB", 50),
             max_input_seconds=_get_int("MAX_INPUT_SECONDS", 300),
             ffmpeg_timeout=_get_int("FFMPEG_TIMEOUT", 240),
-        note_delogo=_get_str("NOTE_DELOGO", "68,72,30,26"),
+            note_delogo=_get_str("NOTE_DELOGO", "68,72,30,26"),
             ai_free_daily=_get_int("AI_FREE_DAILY", 15),
             ai_pro_daily=_get_int("AI_PRO_DAILY", 100),
             invites_for_pro=_get_int("INVITES_FOR_PRO", 2),
