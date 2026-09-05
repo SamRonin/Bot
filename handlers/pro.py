@@ -8,7 +8,7 @@ from aiogram.types import Message
 
 from config import settings
 from database import db
-from handlers.start import referral_link_for
+from handlers.start import referral_link_for_async
 from keyboards.main import share_referral_keyboard
 from utils.helpers import fa_num, format_dt_fa, pro_remaining_text
 
@@ -17,6 +17,7 @@ router = Router()
 
 async def show_pro(message: Message) -> None:
     user_id = message.from_user.id
+    ref_link = await referral_link_for_async(message.bot, user_id)
     user = await db.get_user(user_id)
     need = await db.get_int_setting("invites_for_pro", settings.invites_for_pro)
     days = await db.get_int_setting("pro_days", settings.pro_days)
@@ -53,10 +54,10 @@ async def show_pro(message: Message) -> None:
         f"💡 پرو یعنی روزانه <b>{fa_num(pro_limit)}</b> تبدیل به‌جای "
         f"<b>{fa_num(free_limit)}</b> + سقف حجم بالاتر.\n\n"
         "🔗 <b>لینک دعوت اختصاصی تو:</b>\n"
-        f"<code>{referral_link_for(user_id)}</code>"
+        f"<code>{ref_link}</code>"
     )
     await message.answer(
-        text, reply_markup=share_referral_keyboard(referral_link_for(user_id))
+        text, reply_markup=share_referral_keyboard(ref_link)
     )
 
 

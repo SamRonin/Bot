@@ -12,14 +12,37 @@ from config import settings
 from database import db
 from keyboards.main import main_menu
 from utils.helpers import fa_num, safe_format
-from utils.store import bot_username
+from utils.store import ensure_bot_username, get_bot_username
 
 log = logging.getLogger(__name__)
 router = Router()
 
 
 def referral_link_for(user_id: int) -> str:
-    return f"https://t.me/{bot_username}?start=ref_{user_id}"
+    """Build the deep-link that credits `user_id` as the referrer.
+
+    The username is looked up at call time via `get_bot_username()`. Importing
+    the `bot_username` value directly would bind the empty string present at
+    import time and yield a broken `https://t.me/?start=ref_...` link.
+    """
+    username = get_bot_username()
+    if not username:
+        log.warning(
+            "bot_username is empty while building a referral link for %s — "
+            "check the startup get_me() call or set BOT_USERNAME.",
+            user_id,
+        )
+    return f"https://t.me/{username}?start=ref_{user_id}"
+
+
+async def referral_link_for_async(bot, user_id: int) -> str:
+    """Like `referral_link_for`, but resolves the username if it's unknown.
+
+    Preferred inside handlers: it guarantees a usable link even if the
+    startup lookup was skipped or failed.
+    """
+    await ensure_bot_username(bot)
+    return referral_link_for(user_id)
 
 
 @router.message(CommandStart())

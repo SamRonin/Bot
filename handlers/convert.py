@@ -85,14 +85,14 @@ async def _convert(
 
     used = await db.today_conversions(user_id)
     if used >= limit:
-        from handlers.start import referral_link_for
+        from handlers.start import referral_link_for_async
 
         text = (
             "😔 <b>سهمیه امروزت تموم شد!</b>\n\n"
             f"تو امروز {fa_num(used)} تبدیل انجام دادی (سقف: {fa_num(limit)}).\n"
             "فردا دوباره می‌تونی استفاده کنی 🔄\n\n"
             "⭐️ می‌خوای نامحدود بشه؟ با دعوت ۲ نفر، ۱۵ روز پرو بگیر:\n"
-            f"{referral_link_for(user_id)}"
+            f"{await referral_link_for_async(message.bot, user_id)}"
         )
         if is_pro:
             text = (
