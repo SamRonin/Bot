@@ -37,7 +37,6 @@ COMMANDS = [
     BotCommand(command="pro", description="حساب پرو و دعوت دوستان"),
     BotCommand(command="destinations", description="مدیریت کانال/گروه‌ها"),
     BotCommand(command="ai", description="پشتیبانی هوشمند"),
-    BotCommand(command="admin", description="پنل ادمین"),
 ]
 
 
