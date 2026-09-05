@@ -1,10 +1,12 @@
 """AI support chat (Prexzy Gemini) + extras: summary, translation, general QA."""
 from __future__ import annotations
 
+import asyncio
+import html
 import logging
 import time
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.enums import ChatAction
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, StateFilter
@@ -58,9 +60,44 @@ MODE_HINTS = {
 
 AI_COOLDOWN_SECONDS = 3
 
+# Sent the moment the AI starts working, so the user never thinks the bot froze.
+THINKING_TEXT = "⏳ دارم فکر می‌کنم و جوابت رو می‌نویسم… یه لحظه صبر کن 🤖"
+
 
 class AiStates(StatesGroup):
     chatting = State()
+
+
+async def _typing_loop(bot: Bot, chat_id: int, stop: asyncio.Event) -> None:
+    """Keep Telegram's «typing…» indicator alive while the AI is working."""
+    while not stop.is_set():
+        try:
+            await bot.send_chat_action(chat_id, ChatAction.TYPING)
+        except Exception:  # noqa: BLE001 - the indicator is cosmetic
+            return
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=4)
+        except asyncio.TimeoutError:
+            continue
+
+
+async def _safe_edit(msg: Message, text: str) -> bool:
+    """edit_text that tolerates «message not found / not modified»."""
+    try:
+        await msg.edit_text(text)
+        return True
+    except TelegramBadRequest:
+        return False
+    except Exception:  # noqa: BLE001
+        log.warning("Could not edit the thinking message", exc_info=True)
+        return False
+
+
+async def _safe_delete(msg: Message) -> None:
+    try:
+        await msg.delete()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 @router.message(Command("ai"))
@@ -158,27 +195,45 @@ async def ai_chat(message: Message, state: FSMContext) -> None:
     else:
         prompt = support_prompt(text)
 
-    await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
-    try:
-        answer = await ask_ai(prompt, user_id=user_id, _tag=mode)
-    except AIError as exc:
-        await message.answer(str(exc))
-        return
-    except Exception:  # noqa: BLE001
-        log.exception("AI handler error")
-        await message.answer("❌ خطای غیرمنتظره؛ دوباره تلاش کن.")
-        return
+    # Tell the user we're working — the answer can take a while.
+    thinking = await message.answer(THINKING_TEXT)
 
-    await db.log_ai(user_id)
-    left = max(0, quota - used - 1)
-    footer = f"\n\n🔋 سهمیه امروز: {fa_num(left)} مونده"
-    for i, chunk in enumerate(split_text(answer)):
-        if i == 0:
-            await message.answer(chunk + (footer if len(split_text(answer)) == 1 else ""))
+    stop = asyncio.Event()
+    typing_task = asyncio.create_task(
+        _typing_loop(message.bot, message.chat.id, stop)
+    )
+    try:
+        try:
+            answer = await ask_ai(prompt, user_id=user_id, _tag=mode)
+        except AIError as exc:
+            if not await _safe_edit(thinking, str(exc)):
+                await message.answer(str(exc))
+            return
+        except Exception:  # noqa: BLE001
+            log.exception("AI handler error")
+            if not await _safe_edit(thinking, "❌ خطای غیرمنتظره؛ دوباره تلاش کن."):
+                await message.answer("❌ خطای غیرمنتظره؛ دوباره تلاش کن.")
+            return
+
+        await db.log_ai(user_id)
+        left = max(0, quota - used - 1)
+        footer = f"\n\n🔋 سهمیه امروز: {fa_num(left)} مونده"
+        # The bot speaks HTML — neutralise markup coming from the model so a
+        # stray "<" can never make Telegram reject the whole message.
+        # (3800 keeps escaped chunks safely under Telegram's 4096 limit.)
+        chunks = split_text(html.escape(answer), chunk=3800)
+        if len(chunks) == 1:
+            # Reuse the «thinking» bubble as the answer (less spam).
+            if not await _safe_edit(thinking, chunks[0] + footer):
+                await message.answer(chunks[0] + footer)
         else:
-            await message.answer(chunk)
-    if len(split_text(answer)) > 1:
-        await message.answer(f"🔋 سهمیه امروز: {fa_num(left)} مونده")
+            last_idx = len(chunks) - 1
+            for i, chunk in enumerate(chunks):
+                await message.answer(chunk + (footer if i == last_idx else ""))
+            await _safe_delete(thinking)
+    finally:
+        stop.set()
+        typing_task.cancel()
 
 
 # Videos fall through to the converter even mid-chat (convert router is next).
