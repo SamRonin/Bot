@@ -97,6 +97,19 @@ DEFAULT_TEXTS = {
     ),
 }
 
+# Post-conversion promo message (photo + caption + help button). The admin
+# edits both from the panel; an empty photo means "text only", and empty
+# photo + empty caption disables the promo entirely.
+PROMO_DEFAULTS = {
+    "promo_photo": "",
+    "promo_caption": (
+        "✨ دیدی چقدر راحت بود؟\n\n"
+        "هر ویدیویی رو چشم‌به‌هم‌زدن به ویدیو مسیج گرد تبدیل کن 🎥➡️⭕️ "
+        "و مستقیم بفرستش توی کانال یا گروهت 📢\n\n"
+        "👇 برای دیدن همه قابلیت‌ها، راهنمای کامل ربات رو بگیر"
+    ),
+}
+
 
 class Database:
     def __init__(self, path: str):
@@ -123,6 +136,7 @@ class Database:
                 "invites_for_pro": str(settings.invites_for_pro),
                 "pro_days": str(settings.pro_days),
                 **DEFAULT_TEXTS,
+                **PROMO_DEFAULTS,
             }
             for key, value in defaults.items():
                 await db.execute(

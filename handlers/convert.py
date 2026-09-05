@@ -25,7 +25,8 @@ from services.converter import (
     to_normal_video,
     to_video_note,
 )
-from utils.helpers import fa_num
+from services.promo import send_promo
+from utils.helpers import fa_num, safe_format
 from utils.store import get_user_lock, pending_sends, PendingSend
 
 log = logging.getLogger(__name__)
@@ -192,6 +193,9 @@ async def _convert(
                 "می‌خوای برات بفرستمش توی کانال یا گروه؟ 📢",
                 reply_markup=ask_send_keyboard(),
             )
+            # Admin-configurable promo (photo + caption + «دریافت راهنما»).
+            # Silently skipped when disabled; failures never break the flow.
+            await send_promo(message.bot, message.chat.id)
         except ConvertError as exc:
             log.warning("convert failed for %s: %s", user_id, exc)
             try:
@@ -213,6 +217,25 @@ async def _convert(
                         os.remove(p)
                 except OSError:
                     pass
+
+
+# ---------------------------------------------------------------------------
+# promo message: «📖 دریافت راهنما» button
+# ---------------------------------------------------------------------------
+
+@router.callback_query(F.data == "promo:help")
+async def promo_help(callback: CallbackQuery) -> None:
+    """Answer the promo's inline button with the (admin-editable) help text."""
+    need = await db.get_int_setting("invites_for_pro", settings.invites_for_pro)
+    days = await db.get_int_setting("pro_days", settings.pro_days)
+    template = await db.get_setting("help_text", "ℹ️ راهنما")
+    await callback.answer()
+    try:
+        await callback.message.answer(
+            safe_format(template, need=fa_num(need), days=fa_num(days))
+        )
+    except TelegramBadRequest:
+        log.warning("could not send help text for promo button")
 
 
 # ---------------------------------------------------------------------------
