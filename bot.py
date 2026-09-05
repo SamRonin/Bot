@@ -18,6 +18,7 @@ from config import settings
 from database import db
 from handlers import admin, ai_support, common, convert, destinations, pro, start
 from middlewares import UserMiddleware
+from services.ai_client import close_ai_http
 from services.converter import ffmpeg_available, ffprobe_available
 from utils import store
 
@@ -90,7 +91,10 @@ async def main() -> None:
             pass  # admin blocked the bot — nothing to do
 
     log.info("Starting polling...")
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await close_ai_http()
 
 
 if __name__ == "__main__":
