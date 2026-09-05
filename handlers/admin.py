@@ -55,6 +55,7 @@ TEXT_META = {
 }
 
 
+PROMO_TEXT_MAX = 4000    # Telegram message text limit is 4096 chars
 PROMO_CAPTION_MAX = 1000  # Telegram photo captions cap at 1024 chars
 
 
@@ -63,6 +64,7 @@ class AdminStates(StatesGroup):
     waiting_user_query = State()
     waiting_limit_value = State()
     waiting_text_value = State()
+    waiting_promo_text = State()
     waiting_promo_photo = State()
     waiting_promo_caption = State()
 
@@ -668,29 +670,40 @@ async def text_save(message: Message, state: FSMContext) -> None:
 
 
 # ------------------------------------------------------------------ promo ---
-# Post-conversion message: photo + caption + «📖 دریافت راهنما» button.
-# Both parts are stored in settings and managed here.
+# Post-conversion flow: promo_text + «📖 دریافت راهنما» button; tapping the
+# button sends promo_photo with promo_caption. All three live in settings
+# and are managed here.
 
-def _promo_panel_text(photo: str, caption: str) -> str:
-    photo_state = "✅ تنظیم شده" if photo else "❌ بدون عکس (فقط متن + دکمه)"
-    shown = caption.strip()
-    caption_state = f"<blockquote>{html.escape(shown)}</blockquote>" if shown else "—"
+def _promo_panel_text(text: str, photo: str, caption: str) -> str:
+    shown_text = text.strip()
+    text_state = (
+        f"<blockquote>{html.escape(shown_text)}</blockquote>"
+        if shown_text else "❌ خالی (پیام بعد از تبدیل فرستاده نمی‌شه)"
+    )
+    photo_state = "✅ تنظیم شده" if photo else "❌ بدون عکس (فقط متن)"
+    shown_caption = caption.strip()
+    caption_state = (
+        f"<blockquote>{html.escape(shown_caption)}</blockquote>"
+        if shown_caption else "—"
+    )
     return (
         "🖼 <b>پیام تبلیغ (بعد از تبدیل)</b>\n\n"
-        "بعد از هر تبدیل موفق، زیر پیام «می‌خوای برات بفرستمش توی کانال یا "
-        "گروه؟» این پیام هم برای کاربر می‌ره:\n"
-        "🖼 یک <b>عکس</b> + 📝 <b>کپشن</b> + دکمه شیشه‌ای «📖 دریافت راهنما»\n\n"
+        "1️⃣ بعد از هر تبدیل، زیر پیام «می‌خوای برات بفرستمش توی کانال یا "
+        "گروه؟» این <b>متن + دکمه شیشه‌ای «📖 دریافت راهنما»</b> برای کاربر "
+        f"می‌ره:\n{text_state}\n\n"
+        "2️⃣ وقتی کاربر دکمه رو بزنه، این <b>عکس + کپشن</b> براش ارسال می‌شه:\n"
         f"• عکس: <b>{photo_state}</b>\n"
-        f"• کپشن فعلی:\n{caption_state}\n\n"
-        "💡 اگه هیچ‌کدوم رو تنظیم نکنی، این پیام فرستاده نمی‌شه."
+        f"• کپشن:\n{caption_state}\n\n"
+        "💡 با دکمه‌های زیر هر بخش رو عوض کن؛ «👀 پیش‌نمایش» هم دقیقاً همون "
+        "چیزی رو نشونت می‌ده که کاربر می‌بینه."
     )
 
 
 async def _show_promo_panel(callback: CallbackQuery) -> None:
-    photo, caption = await get_promo()
+    text, photo, caption = await get_promo()
     try:
         await callback.message.edit_text(
-            _promo_panel_text(photo, caption),
+            _promo_panel_text(text, photo, caption),
             reply_markup=promo_admin_keyboard(bool(photo)),
         )
     except TelegramBadRequest:
@@ -706,6 +719,81 @@ async def adm_promo(callback: CallbackQuery, state: FSMContext) -> None:
     await _show_promo_panel(callback)
 
 
+# ----- step 1: the text sent after every conversion (+ help button) -----
+
+@router.callback_query(F.data == "promo:set:text")
+async def promo_text_ask(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback.from_user.id):
+        return await _deny(callback)
+    await state.set_state(AdminStates.waiting_promo_text)
+    await callback.answer()
+    text, _, _ = await get_promo()
+    shown = text.strip()
+    current = f"<blockquote>{html.escape(shown)}</blockquote>" if shown else "—"
+    try:
+        await callback.message.edit_text(
+            "💬 <b>متن پیام بعد از تبدیل</b>\n\n"
+            f"متن فعلی:\n{current}\n\n"
+            f"متن جدید رو بفرست (حداکثر {fa_num(PROMO_TEXT_MAX)} کاراکتر؛ "
+            "می‌تونی از تگ‌های HTML مثل <b>...</b> استفاده کنی).\n"
+            "این متن همراه دکمه شیشه‌ای «📖 دریافت راهنما» فرستاده می‌شه.\n"
+            "برای غیرفعال کردن این پیام فقط <code>-</code> بفرست.\n\n"
+            "برای انصراف /admin رو بزن.",
+            reply_markup=back_admin_keyboard(),
+        )
+    except TelegramBadRequest:
+        pass
+
+
+@router.message(AdminStates.waiting_promo_text)
+async def promo_text_save(message: Message, state: FSMContext) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    if await _menu_escape(message, state):
+        return
+    if not message.text:
+        await message.answer("❌ فقط <b>متن</b> بفرست!")
+        return
+    new_text = message.text.strip()
+    _, photo, _ = await get_promo()
+
+    if new_text == "-":  # special: disable step 1 entirely
+        await db.set_setting("promo_text", "")
+        await state.clear()
+        await message.answer(
+            "🗑 متن پاک شد؛ از این به بعد پیام تبلیغ بعد از تبدیل فرستاده نمی‌شه.",
+            reply_markup=promo_admin_keyboard(bool(photo)),
+        )
+        return
+
+    if len(new_text) > PROMO_TEXT_MAX:
+        await message.answer(
+            f"❌ طولانیه! حداکثر {fa_num(PROMO_TEXT_MAX)} کاراکتر بفرست."
+        )
+        return
+
+    # Validate with a real live preview (catches broken HTML etc.) before saving.
+    try:
+        await message.answer(new_text, reply_markup=promo_keyboard())
+    except TelegramBadRequest as exc:
+        await message.answer(
+            "❌ این متن قابل ارسال نیست (احتمالاً تگ HTML نادرسته):\n"
+            f"<code>{html.escape(exc.message or str(exc))}</code>\n\n"
+            "اصلاحش کن و دوباره بفرست:",
+        )
+        return
+
+    await db.set_setting("promo_text", new_text)
+    await state.clear()
+    await message.answer(
+        "✅ متن ذخیره شد! پیش‌نمایش نهایی هم بالا برات اومد 👆 "
+        "(دکمه «📖 دریافت راهنما» رو هم می‌تونی بزنی تا عکس و کپشن رو تست کنی)",
+        reply_markup=promo_admin_keyboard(bool(photo)),
+    )
+
+
+# ----- step 2: the photo + caption sent when the help button is tapped -----
+
 @router.callback_query(F.data == "promo:set:photo")
 async def promo_photo_ask(callback: CallbackQuery, state: FSMContext) -> None:
     if not _is_admin(callback.from_user.id):
@@ -714,7 +802,7 @@ async def promo_photo_ask(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     try:
         await callback.message.edit_text(
-            "🖼 <b>عکس پیام تبلیغ</b>\n\n"
+            "🖼 <b>عکس راهنما</b> (بعد از زدن دکمه «📖 دریافت راهنما»)\n\n"
             "عکس جدید رو بفرست (به‌صورت عکس معمولی تلگرام، نه فایل).\n\n"
             "برای انصراف /admin رو بزن.",
             reply_markup=back_admin_keyboard(),
@@ -732,11 +820,11 @@ async def promo_photo_save(message: Message, state: FSMContext) -> None:
     note = ""
     if (message.caption or "").strip():
         note = (
-            "\n⚠️ کپشنی که همراه عکس بود ذخیره نشد؛ متن رو با «✏️ تغییر متن "
-            "کپشن» تنظیم کن."
+            "\n⚠️ کپشنی که همراه عکس بود ذخیره نشد؛ متن رو با «✏️ تغییر کپشن "
+            "عکس راهنما» تنظیم کن."
         )
     await message.answer(
-        "✅ عکس پیام تبلیغ ذخیره شد!" + note,
+        "✅ عکس راهنما ذخیره شد!" + note,
         reply_markup=promo_admin_keyboard(has_photo=True),
     )
 
@@ -756,12 +844,12 @@ async def promo_caption_ask(callback: CallbackQuery, state: FSMContext) -> None:
         return await _deny(callback)
     await state.set_state(AdminStates.waiting_promo_caption)
     await callback.answer()
-    _, caption = await get_promo()
+    _, _, caption = await get_promo()
     shown = caption.strip()
     current = f"<blockquote>{html.escape(shown)}</blockquote>" if shown else "—"
     try:
         await callback.message.edit_text(
-            "✏️ <b>کپشن پیام تبلیغ</b>\n\n"
+            "✏️ <b>کپشن عکس راهنما</b> (زیر عکسی که بعد از دکمه می‌ره)\n\n"
             f"متن فعلی:\n{current}\n\n"
             f"متن جدید رو بفرست (حداکثر {fa_num(PROMO_CAPTION_MAX)} کاراکتر؛ "
             "می‌تونی از تگ‌های HTML مثل <b>...</b> استفاده کنی).\n"
@@ -783,15 +871,15 @@ async def promo_caption_save(message: Message, state: FSMContext) -> None:
         await message.answer("❌ فقط <b>متن</b> بفرست!")
         return
     new_caption = message.text.strip()
-    photo, _ = await get_promo()
+    _, photo, _ = await get_promo()
 
     if new_caption == "-":  # special: clear the caption
         await db.set_setting("promo_caption", "")
         await state.clear()
         suffix = (
-            "\nاز این به بعد فقط عکس با دکمه «📖 دریافت راهنما» فرستاده می‌شه."
+            "\nاز این به بعد فقط عکس (بدون متن) فرستاده می‌شه."
             if photo
-            else "\n⚠️ چون نه عکس داری نه کپشن، این پیام کلاً غیرفعال شد."
+            else "\n⚠️ چون نه عکس داری نه کپشن، دکمه «دریافت راهنما» دیگر چیزی نمی‌فرسته."
         )
         await message.answer(
             "🗑 کپشن حذف شد." + suffix,
@@ -809,15 +897,9 @@ async def promo_caption_save(message: Message, state: FSMContext) -> None:
     # broken HTML tags and other Telegram-side rejections before saving.
     try:
         if photo:
-            await message.answer_photo(
-                photo=photo,
-                caption=new_caption,
-                reply_markup=promo_keyboard(),
-            )
+            await message.answer_photo(photo=photo, caption=new_caption)
         else:
-            await message.answer(
-                new_caption, reply_markup=promo_keyboard()
-            )
+            await message.answer(new_caption)
     except TelegramBadRequest as exc:
         await message.answer(
             "❌ این متن قابل ارسال نیست (احتمالاً تگ HTML نادرسته):\n"
@@ -849,10 +931,13 @@ async def promo_preview(callback: CallbackQuery) -> None:
         return await _deny(callback)
     ok = await send_promo(callback.bot, callback.message.chat.id)
     if ok:
-        await callback.answer("👆 پیش‌نمایش نهایی رو ببین")
+        await callback.answer(
+            "👆 این پیام بعد از تبدیله؛ دکمه «📖 دریافت راهنما» رو هم بزن تا "
+            "عکس و کپشن رو ببینی",
+            show_alert=True,
+        )
     else:
         await callback.answer(
-            "چیزی برای پیش‌نمایش نیست! اول عکس یا کپشن رو تنظیم کن "
-            "(اگه تنظیم کردی، ممکنه عکس نامعتبر شده باشه).",
+            "متن پیام بعد از تبدیل خالیه؛ اول با «💬 تغییر متن پیام» تنظیمش کن.",
             show_alert=True,
         )
