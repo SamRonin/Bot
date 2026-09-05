@@ -101,8 +101,9 @@ def promo_keyboard() -> InlineKeyboardMarkup:
 
 def promo_admin_keyboard(has_photo: bool) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="🖼 افزودن/تغییر عکس", callback_data="promo:set:photo")
-    builder.button(text="✏️ تغییر متن کپشن", callback_data="promo:set:caption")
+    builder.button(text="💬 تغییر متن پیام (بعد از تبدیل)", callback_data="promo:set:text")
+    builder.button(text="🖼 افزودن/تغییر عکس راهنما", callback_data="promo:set:photo")
+    builder.button(text="✏️ تغییر کپشن عکس راهنما", callback_data="promo:set:caption")
     if has_photo:
         builder.button(text="🗑 حذف عکس", callback_data="promo:del:photo")
     builder.button(text="👀 پیش‌نمایش", callback_data="promo:preview")
