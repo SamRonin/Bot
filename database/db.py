@@ -97,16 +97,24 @@ DEFAULT_TEXTS = {
     ),
 }
 
-# Post-conversion promo message (photo + caption + help button). The admin
-# edits both from the panel; an empty photo means "text only", and empty
-# photo + empty caption disables the promo entirely.
+# Post-conversion promo flow:
+# 1) Right after a conversion the bot sends `promo_text` with one inline
+#    button («📖 دریافت راهنما»). Empty text = nothing is sent.
+# 2) Tapping the button sends `promo_photo` (optional) with `promo_caption`.
+# The admin edits all three from the panel; no redeploy needed.
 PROMO_DEFAULTS = {
+    "promo_text": (
+        "💡 دوست داری همه قابلیت‌های ربات رو یاد بگیری؟\n"
+        "راهنمای کامل رو با دکمه زیر بگیر 👇"
+    ),
     "promo_photo": "",
     "promo_caption": (
-        "✨ دیدی چقدر راحت بود؟\n\n"
-        "هر ویدیویی رو چشم‌به‌هم‌زدن به ویدیو مسیج گرد تبدیل کن 🎥➡️⭕️ "
-        "و مستقیم بفرستش توی کانال یا گروهت 📢\n\n"
-        "👇 برای دیدن همه قابلیت‌ها، راهنمای کامل ربات رو بگیر"
+        "📖 <b>راهنمای کامل ربات</b>\n\n"
+        "🎥 ویدیو بفرست → ویدیو مسیج گرد تحویل بگیر ⭕️\n"
+        "⭕️ ویدیو مسیج بفرست → ویدیو معمولی تحویل بگیر 🎥\n"
+        "📢 نتیجه رو مستقیم توی کانال یا گروهت منتشر کن\n"
+        "⭐️ با دعوت دوستات، حساب پرو و سهمیه بیشتر بگیر!\n\n"
+        "📩 دستورات: /start ، /help ، /pro ، /destinations"
     ),
 }
 
