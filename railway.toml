@@ -1,0 +1,9 @@
+# Railway deployment config — uses the Dockerfile above and
+# auto-restarts the bot if it ever crashes.
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
