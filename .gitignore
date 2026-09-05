@@ -1,0 +1,13 @@
+.env
+__pycache__/
+*.py[cod]
+*.db
+*.db-*
+data/*.db*
+temp/*
+!temp/.gitkeep
+!data/.gitkeep
+.venv/
+venv/
+.vscode/
+.idea/

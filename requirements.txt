@@ -1,0 +1,8 @@
+# Telegram bot framework (async, lightweight)
+aiogram>=3.15.0,<4.0.0
+# Async SQLite driver (bundled stdlib sqlite, zero-config DB)
+aiosqlite>=0.19.0
+# .env support for local development (Railway uses Variables instead)
+python-dotenv>=1.0.0
+# HTTP client for the AI API (also an aiogram dependency)
+aiohttp>=3.9.0
