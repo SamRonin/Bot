@@ -1,7 +1,8 @@
-"""Full admin panel: stats, broadcast, users, limits, logs, channels, texts."""
+"""Full admin panel: stats, broadcast, users, limits, logs, channels, texts, promo."""
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 
 from aiogram import F, Router
@@ -25,9 +26,12 @@ from keyboards.main import (
     broadcast_confirm_keyboard,
     broadcast_mode_keyboard,
     limits_keyboard,
+    promo_admin_keyboard,
+    promo_keyboard,
     texts_keyboard,
     user_actions_keyboard,
 )
+from services.promo import get_promo, send_promo
 from utils.helpers import fa_num, format_dt_fa, pro_remaining_text, safe_format
 from utils.store import broadcast as broadcast_state
 
@@ -51,11 +55,16 @@ TEXT_META = {
 }
 
 
+PROMO_CAPTION_MAX = 1000  # Telegram photo captions cap at 1024 chars
+
+
 class AdminStates(StatesGroup):
     waiting_broadcast = State()
     waiting_user_query = State()
     waiting_limit_value = State()
     waiting_text_value = State()
+    waiting_promo_photo = State()
+    waiting_promo_caption = State()
 
 
 def _is_admin(user_id: int | None) -> bool:
@@ -656,3 +665,194 @@ async def text_save(message: Message, state: FSMContext) -> None:
         f"✅ <b>{TEXT_META[key]}</b> ذخیره شد!",
         reply_markup=texts_keyboard(),
     )
+
+
+# ------------------------------------------------------------------ promo ---
+# Post-conversion message: photo + caption + «📖 دریافت راهنما» button.
+# Both parts are stored in settings and managed here.
+
+def _promo_panel_text(photo: str, caption: str) -> str:
+    photo_state = "✅ تنظیم شده" if photo else "❌ بدون عکس (فقط متن + دکمه)"
+    shown = caption.strip()
+    caption_state = f"<blockquote>{html.escape(shown)}</blockquote>" if shown else "—"
+    return (
+        "🖼 <b>پیام تبلیغ (بعد از تبدیل)</b>\n\n"
+        "بعد از هر تبدیل موفق، زیر پیام «می‌خوای برات بفرستمش توی کانال یا "
+        "گروه؟» این پیام هم برای کاربر می‌ره:\n"
+        "🖼 یک <b>عکس</b> + 📝 <b>کپشن</b> + دکمه شیشه‌ای «📖 دریافت راهنما»\n\n"
+        f"• عکس: <b>{photo_state}</b>\n"
+        f"• کپشن فعلی:\n{caption_state}\n\n"
+        "💡 اگه هیچ‌کدوم رو تنظیم نکنی، این پیام فرستاده نمی‌شه."
+    )
+
+
+async def _show_promo_panel(callback: CallbackQuery) -> None:
+    photo, caption = await get_promo()
+    try:
+        await callback.message.edit_text(
+            _promo_panel_text(photo, caption),
+            reply_markup=promo_admin_keyboard(bool(photo)),
+        )
+    except TelegramBadRequest:
+        pass
+
+
+@router.callback_query(F.data == "adm:promo")
+async def adm_promo(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback.from_user.id):
+        return await _deny(callback)
+    await state.clear()
+    await callback.answer()
+    await _show_promo_panel(callback)
+
+
+@router.callback_query(F.data == "promo:set:photo")
+async def promo_photo_ask(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback.from_user.id):
+        return await _deny(callback)
+    await state.set_state(AdminStates.waiting_promo_photo)
+    await callback.answer()
+    try:
+        await callback.message.edit_text(
+            "🖼 <b>عکس پیام تبلیغ</b>\n\n"
+            "عکس جدید رو بفرست (به‌صورت عکس معمولی تلگرام، نه فایل).\n\n"
+            "برای انصراف /admin رو بزن.",
+            reply_markup=back_admin_keyboard(),
+        )
+    except TelegramBadRequest:
+        pass
+
+
+@router.message(AdminStates.waiting_promo_photo, F.photo)
+async def promo_photo_save(message: Message, state: FSMContext) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    await db.set_setting("promo_photo", message.photo[-1].file_id)
+    await state.clear()
+    note = ""
+    if (message.caption or "").strip():
+        note = (
+            "\n⚠️ کپشنی که همراه عکس بود ذخیره نشد؛ متن رو با «✏️ تغییر متن "
+            "کپشن» تنظیم کن."
+        )
+    await message.answer(
+        "✅ عکس پیام تبلیغ ذخیره شد!" + note,
+        reply_markup=promo_admin_keyboard(has_photo=True),
+    )
+
+
+@router.message(AdminStates.waiting_promo_photo, ~F.photo)
+async def promo_photo_invalid(message: Message, state: FSMContext) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    if await _menu_escape(message, state):
+        return
+    await message.answer("❌ فقط <b>عکس</b> بفرست (یا با /admin خارج شو).")
+
+
+@router.callback_query(F.data == "promo:set:caption")
+async def promo_caption_ask(callback: CallbackQuery, state: FSMContext) -> None:
+    if not _is_admin(callback.from_user.id):
+        return await _deny(callback)
+    await state.set_state(AdminStates.waiting_promo_caption)
+    await callback.answer()
+    _, caption = await get_promo()
+    shown = caption.strip()
+    current = f"<blockquote>{html.escape(shown)}</blockquote>" if shown else "—"
+    try:
+        await callback.message.edit_text(
+            "✏️ <b>کپشن پیام تبلیغ</b>\n\n"
+            f"متن فعلی:\n{current}\n\n"
+            f"متن جدید رو بفرست (حداکثر {fa_num(PROMO_CAPTION_MAX)} کاراکتر؛ "
+            "می‌تونی از تگ‌های HTML مثل <b>...</b> استفاده کنی).\n"
+            "برای حذف کامل کپشن فقط <code>-</code> بفرست.\n\n"
+            "برای انصراف /admin رو بزن.",
+            reply_markup=back_admin_keyboard(),
+        )
+    except TelegramBadRequest:
+        pass
+
+
+@router.message(AdminStates.waiting_promo_caption)
+async def promo_caption_save(message: Message, state: FSMContext) -> None:
+    if not _is_admin(message.from_user.id):
+        return
+    if await _menu_escape(message, state):
+        return
+    if not message.text:
+        await message.answer("❌ فقط <b>متن</b> بفرست!")
+        return
+    new_caption = message.text.strip()
+    photo, _ = await get_promo()
+
+    if new_caption == "-":  # special: clear the caption
+        await db.set_setting("promo_caption", "")
+        await state.clear()
+        suffix = (
+            "\nاز این به بعد فقط عکس با دکمه «📖 دریافت راهنما» فرستاده می‌شه."
+            if photo
+            else "\n⚠️ چون نه عکس داری نه کپشن، این پیام کلاً غیرفعال شد."
+        )
+        await message.answer(
+            "🗑 کپشن حذف شد." + suffix,
+            reply_markup=promo_admin_keyboard(bool(photo)),
+        )
+        return
+
+    if len(new_caption) > PROMO_CAPTION_MAX:
+        await message.answer(
+            f"❌ طولانیه! حداکثر {fa_num(PROMO_CAPTION_MAX)} کاراکتر بفرست."
+        )
+        return
+
+    # Validate by sending a real live preview to the admin first: catches
+    # broken HTML tags and other Telegram-side rejections before saving.
+    try:
+        if photo:
+            await message.answer_photo(
+                photo=photo,
+                caption=new_caption,
+                reply_markup=promo_keyboard(),
+            )
+        else:
+            await message.answer(
+                new_caption, reply_markup=promo_keyboard()
+            )
+    except TelegramBadRequest as exc:
+        await message.answer(
+            "❌ این متن قابل ارسال نیست (احتمالاً تگ HTML نادرسته):\n"
+            f"<code>{html.escape(exc.message or str(exc))}</code>\n\n"
+            "اصلاحش کن و دوباره بفرست:",
+        )
+        return
+
+    await db.set_setting("promo_caption", new_caption)
+    await state.clear()
+    await message.answer(
+        "✅ کپشن ذخیره شد! پیش‌نمایش نهایی هم بالا برات اومد 👆",
+        reply_markup=promo_admin_keyboard(bool(photo)),
+    )
+
+
+@router.callback_query(F.data == "promo:del:photo")
+async def promo_photo_delete(callback: CallbackQuery) -> None:
+    if not _is_admin(callback.from_user.id):
+        return await _deny(callback)
+    await db.set_setting("promo_photo", "")
+    await callback.answer("🗑 عکس حذف شد!")
+    await _show_promo_panel(callback)
+
+
+@router.callback_query(F.data == "promo:preview")
+async def promo_preview(callback: CallbackQuery) -> None:
+    if not _is_admin(callback.from_user.id):
+        return await _deny(callback)
+    ok = await send_promo(callback.bot, callback.message.chat.id)
+    if ok:
+        await callback.answer("👆 پیش‌نمایش نهایی رو ببین")
+    else:
+        await callback.answer(
+            "چیزی برای پیش‌نمایش نیست! اول عکس یا کپشن رو تنظیم کن "
+            "(اگه تنظیم کردی، ممکنه عکس نامعتبر شده باشه).",
+            show_alert=True,
+        )
