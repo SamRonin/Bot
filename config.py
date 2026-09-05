@@ -57,12 +57,6 @@ class Settings:
     max_input_seconds: int = 300  # reject videos longer than this (CPU guard)
     note_max_seconds: int = 60    # Telegram video-note max length (we trim)
     ffmpeg_timeout: int = 240     # seconds per conversion
-
-    # Watermark removal for video-note -> video. New Telegram clients (2025+)
-    # burn an animated brand logo into the note file itself. This is the
-    # delogo rectangle in PERCENTS of the frame: "x,y,w,h" (0-100).
-    # Set NOTE_DELOGO="" to disable removal entirely.
-    note_delogo: str = "68,72,30,26"
     
     # AI limits
     ai_free_daily: int = 15
@@ -89,7 +83,6 @@ class Settings:
             pro_max_mb=_get_int("PRO_MAX_MB", 50),
             max_input_seconds=_get_int("MAX_INPUT_SECONDS", 300),
             ffmpeg_timeout=_get_int("FFMPEG_TIMEOUT", 240),
-            note_delogo=_get_str("NOTE_DELOGO", "68,72,30,26"),
             ai_free_daily=_get_int("AI_FREE_DAILY", 15),
             ai_pro_daily=_get_int("AI_PRO_DAILY", 100),
             invites_for_pro=_get_int("INVITES_FOR_PRO", 2),
