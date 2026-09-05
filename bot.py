@@ -59,7 +59,12 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     me = await bot.get_me()
-    store.bot_username = me.username or ""
+    username = store.set_bot_username(me.username)
+    if not username:
+        log.warning(
+            "Telegram returned no username for this bot — referral deep-links "
+            "cannot be built. Set BOT_USERNAME as a fallback."
+        )
     log.info("Logged in as @%s (id=%s)", me.username, me.id)
 
     dp = Dispatcher(storage=MemoryStorage())

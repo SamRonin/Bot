@@ -40,6 +40,10 @@ class Settings:
     """All bot settings with safe defaults for Railway's free tier."""
 
     bot_token: str = ""
+    # Optional: only a fallback for referral links. Normally the real username
+    # is discovered at startup via get_me(); set this if you want a guaranteed
+    # value even before/if that call fails.
+    bot_username: str = ""
     admin_ids: set[int] = field(default_factory=set)
 
     # Paths
@@ -73,6 +77,7 @@ class Settings:
     def load(cls) -> "Settings":
         return cls(
             bot_token=_get_str("BOT_TOKEN", ""),
+            bot_username=_get_str("BOT_USERNAME", "").lstrip("@").strip(),
             admin_ids=_get_admin_ids(),
             db_path=_get_str("DB_PATH", "data/bot.db"),
             temp_dir=_get_str("TEMP_DIR", "temp"),

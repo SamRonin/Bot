@@ -1,6 +1,8 @@
 """Reply + inline keyboards (all Persian labels)."""
 from __future__ import annotations
 
+from urllib.parse import urlencode
+
 from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -213,10 +215,13 @@ def texts_keyboard() -> InlineKeyboardMarkup:
 
 
 def share_referral_keyboard(ref_link: str) -> InlineKeyboardMarkup:
+    # Both values must be percent-encoded: the link contains '?' and '&', which
+    # would otherwise terminate/split the share URL's own query string.
+    share_text = "🎬 با این ربات ویدیو رو به ویدیو مسیج گرد تبدیل کن!"
+    query = urlencode({"url": ref_link, "text": share_text})
     builder = InlineKeyboardBuilder()
     builder.button(
         text="📤 اشتراک‌گذاری لینک دعوت",
-        url=f"https://t.me/share/url?url={ref_link}&text="
-            "🎬 با این ربات ویدیو رو به ویدیو مسیج گرد تبدیل کن!",
+        url=f"https://t.me/share/url?{query}",
     )
     return builder.as_markup()
